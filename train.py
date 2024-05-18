@@ -35,10 +35,10 @@ def train():
     mode = 'train'
 
     backbone_name = 'STDCNet813'
-    data_path = '.\\dataset_part\\data'
-    checkpoint_save_path = f'model_part\\checkpoints\\train_{backbone_name}\\result'
+    data_path = os.path.join('dataset_part') #'.\\dataset_part\\data'
+    checkpoint_save_path = os.path.join('model_part', 'checkpoints', f'train_{backbone_name}', 'result') #f'model_part\\checkpoints\\train_{backbone_name}\\result'
 
-    pretrain_path = 'model_part\\checkpoints\\STDCNet813M_73.91.tar'
+    pretrain_path = os.path.join('model_part', 'checkpoints', 'STDCNet813M_73.91.tar') #'model_part\\checkpoints\\STDCNet813M_73.91.tar'
     #pretrain_path = ''
 
     if not os.path.exists(checkpoint_save_path): os.makedirs(checkpoint_save_path)

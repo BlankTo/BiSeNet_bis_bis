@@ -60,8 +60,8 @@ class MscEvalV0(object):
         ious = hist.diag() / (hist.sum(dim=0) + hist.sum(dim=1) - hist.diag())
         miou = ious.mean()
         return miou.item()
-
-def evaluatev0(checkpoint_save_path= '.\\model_part\\checkpoints', data_path= '.\\dataset_part\\data', backbone_name= 'No model selected', scale= 0.75, use_boundary_2= False, use_boundary_4= False, use_boundary_8= False, use_boundary_16= False, use_conv_last= False):
+# '.\\model_part\\checkpoints' # '.\\dataset_part\\data'
+def evaluatev0(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), data_path= os.path.join('dataset_part', 'data'), backbone_name= 'No model selected', scale= 0.75, use_boundary_2= False, use_boundary_4= False, use_boundary_8= False, use_boundary_16= False, use_conv_last= False):
     print('scale', scale)
     print('use_boundary_2', use_boundary_2)
     print('use_boundary_4', use_boundary_4)
@@ -225,8 +225,8 @@ class MscEval(object):
         mIOU = np.mean(IOUs)
         return mIOU
 
-
-def evaluate(checkpoint_save_path= '.\\model_part\\checkpoints', data_path= '.\\dataset_part\\data'):
+# '.\\model_part\\checkpoints' # '.\\dataset_part\\data'
+def evaluate(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), data_path= os.path.join('dataset_part', 'data')):
 
     ## model
     print('\n')

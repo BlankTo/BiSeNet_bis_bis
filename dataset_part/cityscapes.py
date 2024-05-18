@@ -27,7 +27,7 @@ class CityScapes(Dataset):
 
         print(f'data_path: {data_path}')
 
-        li8b_path = os.path.join(data_path, 'leftImg8bit', mode)
+        li8b_path = os.path.join(data_path, 'data', 'leftImg8bit', mode)
         print(li8b_path)
 
         folders = os.listdir(li8b_path)
@@ -49,7 +49,7 @@ class CityScapes(Dataset):
         self.labels = {}
         label_names = []
 
-        gt_path = os.path.join(data_path, 'gtFine', mode)
+        gt_path = os.path.join(data_path, 'data', 'gtFine', mode)
         print(gt_path)
 
         folders = os.listdir(gt_path)
