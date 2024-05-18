@@ -51,21 +51,21 @@ class DetailAggregateLoss(nn.Module):
         # boundary_logits = boundary_logits.unsqueeze(1)
         #boundary_targets = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.cuda.FloatTensor), self.laplacian_kernel, padding=1)
         boundary_targets = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.FloatTensor), self.laplacian_kernel, padding= 1)
-        boundary_targets = boundary_targets.clamp(min=0)
+        boundary_targets = boundary_targets.clamp(min= 0)
         boundary_targets[boundary_targets > 0.1] = 1
         boundary_targets[boundary_targets <= 0.1] = 0
 
         #boundary_targets_x2 = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.cuda.FloatTensor), self.laplacian_kernel, stride=2, padding=1)
         boundary_targets_x2 = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.FloatTensor), self.laplacian_kernel, stride= 2, padding= 1)
-        boundary_targets_x2 = boundary_targets_x2.clamp(min=0)
+        boundary_targets_x2 = boundary_targets_x2.clamp(min= 0)
         
         #boundary_targets_x4 = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.cuda.FloatTensor), self.laplacian_kernel, stride=4, padding=1)
         boundary_targets_x4 = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.FloatTensor), self.laplacian_kernel, stride= 4, padding= 1)
-        boundary_targets_x4 = boundary_targets_x4.clamp(min=0)
+        boundary_targets_x4 = boundary_targets_x4.clamp(min= 0)
 
         #boundary_targets_x8 = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.cuda.FloatTensor), self.laplacian_kernel, stride=8, padding=1)
         boundary_targets_x8 = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.FloatTensor), self.laplacian_kernel, stride= 8, padding= 1)
-        boundary_targets_x8 = boundary_targets_x8.clamp(min=0)
+        boundary_targets_x8 = boundary_targets_x8.clamp(min= 0)
     
         boundary_targets_x8_up = torch_functional.interpolate(boundary_targets_x8, boundary_targets.shape[2:], mode= 'nearest')
         boundary_targets_x4_up = torch_functional.interpolate(boundary_targets_x4, boundary_targets.shape[2:], mode= 'nearest')
@@ -80,19 +80,26 @@ class DetailAggregateLoss(nn.Module):
         boundary_targets_x8_up[boundary_targets_x8_up > 0.1] = 1
         boundary_targets_x8_up[boundary_targets_x8_up <= 0.1] = 0
         
-        boudary_targets_pyramids = torch.stack((boundary_targets, boundary_targets_x2_up, boundary_targets_x4_up), dim= 1)
+        boundary_targets_pyramids = torch.stack((boundary_targets, boundary_targets_x2_up, boundary_targets_x4_up), dim= 1)
         
-        boudary_targets_pyramids = boudary_targets_pyramids.squeeze(2)
-        boudary_targets_pyramid = torch_functional.conv2d(boudary_targets_pyramids, self.fuse_kernel)
+        print((boundary_logits.size(), boundary_targets_pyramids.size()))
 
-        boudary_targets_pyramid[boudary_targets_pyramid > 0.1] = 1
-        boudary_targets_pyramid[boudary_targets_pyramid <= 0.1] = 0
+        boundary_targets_pyramids = boundary_targets_pyramids.squeeze(2)
+        boundary_targets_pyramid = torch_functional.conv2d(boundary_targets_pyramids, self.fuse_kernel)
+        
+        print((boundary_logits.size(), boundary_targets_pyramid.size()))
+
+        boundary_targets_pyramid[boundary_targets_pyramid > 0.1] = 1
+        boundary_targets_pyramid[boundary_targets_pyramid <= 0.1] = 0
         
         if boundary_logits.shape[-1] != boundary_targets.shape[-1]:
             boundary_logits = torch_functional.interpolate(boundary_logits, boundary_targets.shape[2:], mode= 'bilinear', align_corners= True)
         
-        bce_loss = torch_functional.binary_cross_entropy_with_logits(boundary_logits, boudary_targets_pyramid)
-        dice_loss = dice_loss_func(torch.sigmoid(boundary_logits), boudary_targets_pyramid)
+        #boundary_targets_pyramids = boundary_targets_pyramids.squeeze(1)
+        print((boundary_logits.size(), boundary_targets_pyramid.size()))
+
+        bce_loss = torch_functional.binary_cross_entropy_with_logits(boundary_logits, boundary_targets_pyramid)
+        dice_loss = dice_loss_func(torch.sigmoid(boundary_logits), boundary_targets_pyramid)
         return bce_loss,  dice_loss
 
     def get_params(self):

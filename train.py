@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 import torch
 #from torch.utils.data import RandomSampler
@@ -25,8 +26,9 @@ optimizer_part_path = os.path.join(current_dir, 'optimizer_part')
 sys.path.append(optimizer_part_path)
 from optimizer_part.optimizer import Optimizer
 
-path_to_res = ''
-
+evaluation_part_path = os.path.join(current_dir, 'evaluation_part')
+sys.path.append(evaluation_part_path)
+from evaluation_part.evaluation import MscEvalV0
 
 def train():
 
@@ -123,12 +125,185 @@ def train():
             max_iter = max_iter,
             power = power)
     
-    ## train loop (also evaluation.py)
+    ## train loop
+    msg_iter = 50
+    loss_avg = []
+    loss_boundery_bce = []
+    loss_boundery_dice = []
+    #starting_time = glob_st = time.time()
+    diter = iter(dl)
+    epoch = 0
+    for i in range(max_iter):
+        try:
+            im, lb = next(diter)
+            if not im.size()[0] == batch_size: raise StopIteration
+        except StopIteration:
+            epoch += 1
+            sampler.set_epoch(epoch)
+            diter = iter(dl)
+            im, lb = next(diter)
+        #im = im.cuda()
+        #lb = lb.cuda()
+        H, W = im.size()[2:]
+        lb = torch.squeeze(lb, 1)
 
-    #TODO
+        optimizer.zero_grad()
+
+
+        if use_boundary_2 and use_boundary_4 and use_boundary_8:
+            out, out16, out32, detail2, detail4, detail8 = net(im)
+        
+        if (not use_boundary_2) and use_boundary_4 and use_boundary_8:
+            out, out16, out32, detail4, detail8 = net(im)
+
+        if (not use_boundary_2) and (not use_boundary_4) and use_boundary_8:
+            print(len(net(im)))
+            out, out16, out32, detail8 = net(im)
+
+        if (not use_boundary_2) and (not use_boundary_4) and (not use_boundary_8):
+            out, out16, out32 = net(im)
+
+        lossp = criteria_p(out, lb)
+        loss2 = criteria_16(out16, lb)
+        loss3 = criteria_32(out32, lb)
+        
+        boundery_bce_loss = 0.
+        boundery_dice_loss = 0.
+        
+        
+        if use_boundary_2: 
+            # if dist.get_rank()==0:
+            #     print('use_boundary_2')
+            boundery_bce_loss2,  boundery_dice_loss2 = boundary_loss_func(detail2, lb)
+            boundery_bce_loss += boundery_bce_loss2
+            boundery_dice_loss += boundery_dice_loss2
+        
+        if use_boundary_4:
+            # if dist.get_rank()==0:
+            #     print('use_boundary_4')
+            boundery_bce_loss4,  boundery_dice_loss4 = boundary_loss_func(detail4, lb)
+            boundery_bce_loss += boundery_bce_loss4
+            boundery_dice_loss += boundery_dice_loss4
+
+        if use_boundary_8:
+            # if dist.get_rank()==0:
+            #     print('use_boundary_8')
+            boundery_bce_loss8,  boundery_dice_loss8 = boundary_loss_func(detail8, lb)
+            boundery_bce_loss += boundery_bce_loss8
+            boundery_dice_loss += boundery_dice_loss8
+
+        loss = lossp + loss2 + loss3 + boundery_bce_loss + boundery_dice_loss
+        
+        loss.backward()
+        optimizer.step()
+
+        loss_avg.append(loss.item())
+
+        loss_boundery_bce.append(boundery_bce_loss.item())
+        loss_boundery_dice.append(boundery_dice_loss.item())
+
+        ## print training log message
+        if (i + 1) % msg_iter == 0:
+            loss_avg = sum(loss_avg) / len(loss_avg)
+            lr = optimizer.lr
+            ed = time.time()
+            #t_intv, glob_t_intv = ed - starting_time, ed - glob_st
+            #eta = int((max_iter - it) * (glob_t_intv / it))
+            #eta = str(datetime.timedelta(seconds=eta))
+
+            loss_boundery_bce_avg = sum(loss_boundery_bce) / len(loss_boundery_bce)
+            loss_boundery_dice_avg = sum(loss_boundery_dice) / len(loss_boundery_dice)
+            msg = ', '.join([
+                f'it: {i + 1}/{max_iter}',
+                f'lr: {lr:4f}',
+                f'loss: {loss_avg:.4f}',
+                f'boundery_bce_loss: {loss_boundery_bce_avg:.4f}',
+                f'boundery_dice_loss: {loss_boundery_dice_avg:.4f}',
+                #f'eta: {eta}',
+            ])
+            
+            print(msg)
+            #logger.info(msg)
+            
+            loss_avg = []
+            loss_boundery_bce = []
+            loss_boundery_dice = []
+            st = ed
+            # print(boundary_loss_func.get_params())
+
+        if ((i + 1) % save_iter_sep) == 0:# and i != 0:
+            
+            ## model
+            #logger.info('evaluating the model ...')
+            #logger.info('setup and restore model')
+
+            print('evaluating the model ...')
+            print('setup and restore model')
+            
+            net.eval() # set the net in evaluation mode
+
+            ## evaluator
+
+            #logger.info('compute the mIOU')
+            print('compute the mIOU')
+
+            with torch.no_grad():
+                single_scale1 = MscEvalV0()
+                mIOU50 = single_scale1(net, dl_val, n_classes)
+
+                single_scale2= MscEvalV0(scale=0.75)
+                mIOU75 = single_scale2(net, dl_val, n_classes)
+
+
+            save_pth = os.path.join(checkpoint_save_path, f'model_iter{(i + 1)}_mIOU50_{str(round(mIOU50,4))}_mIOU75_{str(round(mIOU75,4))}.pth')
+            
+            #state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+            state = net.state_dict()
+
+            #if dist.get_rank()==0: torch.save(state, save_pth)
+            torch.save(state, save_pth)
+
+            #logger.info('training iteration {}, model saved to: {}'.format(i + 1, save_pth))
+            print(f'training iteration {(i + 1)}, model saved to: {save_pth}')
+
+            if mIOU50 > maxmIOU50:
+                maxmIOU50 = mIOU50
+                save_pth = os.path.join(checkpoint_save_path, 'model_maxmIOU50.pth'.format(i + 1))
+                #state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+                state = net.state_dict()
+                #if dist.get_rank()==0: torch.save(state, save_pth)
+                torch.save(state, save_pth)
+                    
+                #logger.info('max mIOU model saved to: {}'.format(save_pth))
+                print(f'max mIOU model saved to: {save_pth}')
+            
+            if mIOU75 > maxmIOU75:
+                maxmIOU75 = mIOU75
+                save_pth = os.path.join(checkpoint_save_path, 'model_maxmIOU75.pth'.format(i + 1))
+                #state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+                state = net.state_dict()
+                #if dist.get_rank()==0: torch.save(state, save_pth)
+                torch.save(state, save_pth)
+                #logger.info('max mIOU model saved to: {}'.format(save_pth))
+                print(f'max mIOU model saved to: {save_pth}')
+            
+            #logger.info('mIOU50 is: {}, mIOU75 is: {}'.format(mIOU50, mIOU75))
+            #logger.info('maxmIOU50 is: {}, maxmIOU75 is: {}.'.format(maxmIOU50, maxmIOU75))
+            print(f'mIOU50 is: {mIOU50}, mIOU75 is: {mIOU75}')
+            print(f'maxmIOU50 is: {maxmIOU50}, maxmIOU75 is: {maxmIOU75}.')
+
+            net.train()
 
     ## save model
 
-    #TODO
+    save_pth = os.path.join(checkpoint_save_path, 'model_final.pth')
+    #net.cpu()
+    #state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+    state = net.state_dict()
+    #if dist.get_rank()==0: torch.save(state, save_pth)
+    torch.save(state, save_pth)
+    #logger.info('training done, model saved to: {}'.format(save_pth))
+    print('training done, model saved to: {save_pth}')
+    print('epoch: ', epoch)
 
 train()

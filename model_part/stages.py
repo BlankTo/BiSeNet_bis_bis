@@ -393,7 +393,18 @@ class BiSeNet(nn.Module):
         feat_out16 = torch_functional.interpolate(feat_out16, size= (self.Height, self.Width), mode= 'nearest')
         feat_out32 = torch_functional.interpolate(feat_out32, size= (self.Height, self.Width), mode= 'nearest')
 
-        return feat_out
+        #return feat_out
+
+        if self.use_boundary_2 and self.use_boundary_4 and self.use_boundary_8:
+            return feat_out, feat_out16, feat_out32, feat_res2, feat_res4, feat_res8
+        
+        elif (not self.use_boundary_2) and self.use_boundary_4 and self.use_boundary_8:
+            return feat_out, feat_out16, feat_out32, feat_res4, feat_res8
+        
+        elif (not self.use_boundary_2) and (not self.use_boundary_4) and self.use_boundary_8:
+            return feat_out, feat_out16, feat_out32, feat_res8
+        
+        else: return feat_out, feat_out16, feat_out32
 
     def init_weight(self):
         for layer in self.children():
