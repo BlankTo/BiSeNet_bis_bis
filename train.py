@@ -46,7 +46,7 @@ def train():
     # model params (?)
 
     n_classes = 19
-    batch_size = 16
+    batch_size = 8
     use_boundary_16 = False
     use_boundary_8 = True
     use_boundary_4 = False

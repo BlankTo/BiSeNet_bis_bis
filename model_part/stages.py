@@ -160,6 +160,7 @@ class ContextPath(nn.Module):
             self.Width32 = torch.tensor(48)
 
         elif self.input_size == 1024:
+
             self.Height8 = torch.tensor(128)
             self.Width8 = torch.tensor(256)
 
@@ -358,15 +359,15 @@ class BiSeNet(nn.Module):
         if self.input_size == 512:
             self.Height = torch.tensor(512)
             self.Width = torch.tensor(1024)
+        elif self.input_size == 720:
+            self.Height = torch.tensor(720)
+            self.Width = torch.tensor(960)
         elif self.input_size == 768:
             self.Height = torch.tensor(768)
             self.Width = torch.tensor(1536)
         elif self.input_size == 1024:
             self.Height = torch.tensor(1024)
             self.Width = torch.tensor(2048)
-        elif self.input_size == 720:
-            self.Height = torch.tensor(720)
-            self.Width = torch.tensor(960)
         else:
             print("input_size is not in input_size lists")
             exit(0)
@@ -393,7 +394,7 @@ class BiSeNet(nn.Module):
         feat_out16 = torch_functional.interpolate(feat_out16, size= (self.Height, self.Width), mode= 'nearest')
         feat_out32 = torch_functional.interpolate(feat_out32, size= (self.Height, self.Width), mode= 'nearest')
 
-        #return feat_out
+        #return feat_out # this gave problem alone, why it was used?
 
         if self.use_boundary_2 and self.use_boundary_4 and self.use_boundary_8:
             return feat_out, feat_out16, feat_out32, feat_res2, feat_res4, feat_res8

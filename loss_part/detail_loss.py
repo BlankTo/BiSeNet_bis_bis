@@ -18,11 +18,11 @@ def dice_loss_func(input, target):
 
 def get_one_hot(label, N):
     size = list(label.size())
-    label = label.view(-1)   # reshape 为向量
+    label = label.view(-1)
     #ones = torch.sparse.torch.eye(N).cuda()
     ones = torch.sparse.torch.eye(N)
-    ones = ones.index_select(0, label.long())   # 用上面的办法转为换one hot
-    size.append(N)  # 把类别输目添到size的尾后，准备reshape回原来的尺寸
+    ones = ones.index_select(0, label.long())
+    size.append(N)
     return ones.view(*size)
 
 def get_boundary(gtmasks):
@@ -47,6 +47,8 @@ class DetailAggregateLoss(nn.Module):
         self.fuse_kernel = torch.nn.Parameter(torch.tensor([[6./10], [3./10], [1./10]], dtype= torch.float32).reshape(1, 3, 1, 1).type(torch.FloatTensor))
 
     def forward(self, boundary_logits, gtmasks):
+
+        print(boundary_logits.size())
 
         # boundary_logits = boundary_logits.unsqueeze(1)
         #boundary_targets = torch_functional.conv2d(gtmasks.unsqueeze(1).type(torch.cuda.FloatTensor), self.laplacian_kernel, padding=1)
@@ -79,6 +81,10 @@ class DetailAggregateLoss(nn.Module):
         
         boundary_targets_x8_up[boundary_targets_x8_up > 0.1] = 1
         boundary_targets_x8_up[boundary_targets_x8_up <= 0.1] = 0
+
+        print(boundary_targets_x2_up.size())
+        print(boundary_targets_x4_up.size())
+        print(boundary_targets_x8_up.size())
         
         boundary_targets_pyramids = torch.stack((boundary_targets, boundary_targets_x2_up, boundary_targets_x4_up), dim= 1)
         
@@ -91,14 +97,15 @@ class DetailAggregateLoss(nn.Module):
 
         boundary_targets_pyramid[boundary_targets_pyramid > 0.1] = 1
         boundary_targets_pyramid[boundary_targets_pyramid <= 0.1] = 0
+
+        boundary_targets_pyramid = boundary_targets_pyramid.repeat(1, boundary_logits.shape[1], 1, 1)
         
         if boundary_logits.shape[-1] != boundary_targets.shape[-1]:
             boundary_logits = torch_functional.interpolate(boundary_logits, boundary_targets.shape[2:], mode= 'bilinear', align_corners= True)
         
-        #boundary_targets_pyramids = boundary_targets_pyramids.squeeze(1)
         print((boundary_logits.size(), boundary_targets_pyramid.size()))
 
-        bce_loss = torch_functional.binary_cross_entropy_with_logits(boundary_logits, boundary_targets_pyramid)
+        bce_loss = torch_functional.binary_cross_enztropy_with_logits(boundary_logits, boundary_targets_pyramid)
         dice_loss = dice_loss_func(torch.sigmoid(boundary_logits), boundary_targets_pyramid)
         return bce_loss,  dice_loss
 
