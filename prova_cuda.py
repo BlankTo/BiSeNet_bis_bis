@@ -51,3 +51,19 @@ if cuda_available:
     # Check memory usage again
     print(f"Memory Allocated: {torch.cuda.memory_allocated()} bytes")
     print(f"Memory Cached: {torch.cuda.memory_reserved()} bytes")
+
+    # Define a simple convolutional layer
+    conv = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, stride=1, padding=1)
+
+    # Create a random input tensor
+    input_tensor = torch.randn(1, 3, 64, 64)
+
+    # Move to GPU if available
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    conv.to(device)
+    input_tensor = input_tensor.to(device)
+
+    # Perform the convolution operation
+    output = conv(input_tensor)
+    print(output.shape)
+

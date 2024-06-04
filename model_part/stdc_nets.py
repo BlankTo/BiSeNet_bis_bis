@@ -112,7 +112,7 @@ class CatBottleneck(nn.Module):
 
 #STDC2Net
 class STDCNet1446(nn.Module):
-    def __init__(self, base= 64, layers= [4,5,3], block_num= 4, type= "concat", num_classes= 1000, dropout= 0.20, pretrain_model= '', use_conv_last= False):
+    def __init__(self, base= 64, layers= [4,5,3], block_num= 4, type= "concat", num_classes= 1000, dropout= 0.20, pretrain_model= '', use_conv_last= False, device= 'cpu'):
         super(STDCNet1446, self).__init__()
         if type == "concat":
             block = CatBottleneck
@@ -134,6 +134,8 @@ class STDCNet1446(nn.Module):
         self.x16 = nn.Sequential(self.features[6:11])
         self.x32 = nn.Sequential(self.features[11:])
 
+        self.device = device
+
         if pretrain_model:
             print('using pretrain model {}'.format(pretrain_model))
             self.init_weight(pretrain_model)
@@ -142,7 +144,7 @@ class STDCNet1446(nn.Module):
 
     def init_weight(self, pretrain_model):
         
-        state_dict = torch.load(pretrain_model, map_location= torch.device('cpu'))["state_dict"]
+        state_dict = torch.load(pretrain_model, map_location= torch.device(self.device))["state_dict"]
         self_state_dict = self.state_dict()
         for k, v in state_dict.items():
             self_state_dict.update({k: v})
@@ -203,7 +205,7 @@ class STDCNet1446(nn.Module):
 
 # STDC1Net
 class STDCNet813(nn.Module):
-    def __init__(self, base= 64, layers= [2,2,2], block_num= 4, type= "concat", num_classes= 1000, dropout= 0.20, pretrain_model= '', use_conv_last= False):
+    def __init__(self, base= 64, layers= [2,2,2], block_num= 4, type= "concat", num_classes= 1000, dropout= 0.20, pretrain_model= '', use_conv_last= False, device= 'cpu'):
         super(STDCNet813, self).__init__()
         if type == "concat":
             block = CatBottleneck
@@ -225,6 +227,8 @@ class STDCNet813(nn.Module):
         self.x16 = nn.Sequential(self.features[4:6])
         self.x32 = nn.Sequential(self.features[6:])
 
+        self.device = device
+
         if pretrain_model:
             print('using pretrain model {}'.format(pretrain_model))
             self.init_weight(pretrain_model)
@@ -233,7 +237,7 @@ class STDCNet813(nn.Module):
 
     def init_weight(self, pretrain_model):
         
-        state_dict = torch.load(pretrain_model, map_location= torch.device('cpu'))["state_dict"]
+        state_dict = torch.load(pretrain_model, map_location= torch.device(self.device))["state_dict"]
         self_state_dict = self.state_dict()
         for k, v in state_dict.items():
             self_state_dict.update({k: v})

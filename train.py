@@ -6,6 +6,7 @@ import torch
 #from torch.utils.data import RandomSampler
 from torch.utils.data import SequentialSampler
 from torch.utils.data import DataLoader
+import torch.distributed as dist
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -32,6 +33,9 @@ from evaluation_part.evaluation import MscEvalV0
 
 def train():
 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"device is {device}")
+
     mode = 'train'
 
     backbone_name = 'STDCNet813'
@@ -41,12 +45,27 @@ def train():
     pretrain_path = os.path.join('model_part', 'checkpoints', 'STDCNet813M_73.91.tar') #'model_part\\checkpoints\\STDCNet813M_73.91.tar'
     #pretrain_path = ''
 
-    if not os.path.exists(checkpoint_save_path): os.makedirs(checkpoint_save_path)
+    local_rank = 0 # or device ????? what is local_rank?
+
+    if not os.path.exists(checkpoint_save_path) and dist.get_rank()==0: os.makedirs(checkpoint_save_path)
+
+    shared_mem = "File://shared_mem/file.txt"
+    print(shared_mem)
+
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(
+                backend = 'gloo',
+                init_method = shared_mem,
+                world_size = torch.cuda.device_count(),
+                rank= local_rank
+                )
 
     # model params (?)
 
     n_classes = 19
-    batch_size = 8
+    batch_size = 2
+    num_workers_train = 8
+    num_workers_val = 0
     use_boundary_16 = False
     use_boundary_8 = True
     use_boundary_4 = False
@@ -73,13 +92,15 @@ def train():
     
     ds = CityScapes(data_path, cropsize= cropsize, mode= mode, randomscale= randomscale)
     #sampler = RandomSampler(ds)
-    sampler = SequentialSampler(ds)
-    dl = DataLoader(ds, batch_size= batch_size, shuffle= False, sampler= sampler, pin_memory= False, drop_last= True)
+    #sampler = SequentialSampler(ds)
+    sampler = torch.utils.data.distributed.DistributedSampler(ds)
+    dl = DataLoader(ds, batch_size= batch_size, shuffle= False, sampler= sampler, num_workers= num_workers_train, pin_memory= False, drop_last= True)
 
     ds_val = CityScapes(data_path, mode= 'val', randomscale= randomscale)
     #sampler_val = RandomSampler(ds_val)
-    sampler_val = SequentialSampler(ds_val)
-    dl_val = DataLoader(ds_val, batch_size= 2, shuffle= False, sampler= sampler_val, drop_last= False)
+    #sampler_val = SequentialSampler(ds_val)
+    sampler_val = torch.utils.data.distributed.DistributedSampler(ds_val)
+    dl_val = DataLoader(ds_val, batch_size= 2, shuffle= False, sampler= sampler_val, num_workers= num_workers_val, drop_last= False)
 
     ## model
 
@@ -93,29 +114,36 @@ def train():
         use_boundary_4= use_boundary_4,
         use_boundary_8= use_boundary_8,
         use_boundary_16= use_boundary_16,
-        use_conv_last= use_conv_last
+        use_conv_last= use_conv_last,
+        device= device,
         )
     
     if checkpoint is not None:
-        net.load_state_dict(torch.load(checkpoint, map_location='cpu'))
+        net.load_state_dict(torch.load(checkpoint, map_location= device))
 
     #net.cuda()
+    net = net.to(device)
     net.train() # set the net to train mode
 
-    #net = nn.parallel.DistributedDataParallel(net, device_ids = [args.local_rank, ], output_device = args.local_rank, find_unused_parameters=True)
+    net = torch.nn.parallel.DistributedDataParallel(net, device_ids= [local_rank, ], output_device= local_rank, find_unused_parameters= True)
 
     score_thres = 0.7
     n_min = (batch_size * cropsize[0] * cropsize[1]) // 16
-    criteria_p = OhemCELoss(thresh=score_thres, n_min=n_min, label_to_ignore= label_to_ignore)
-    criteria_16 = OhemCELoss(thresh=score_thres, n_min=n_min, label_to_ignore= label_to_ignore)
-    criteria_32 = OhemCELoss(thresh=score_thres, n_min=n_min, label_to_ignore= label_to_ignore)
-    boundary_loss_func = DetailAggregateLoss()
+    criteria_p = OhemCELoss(thresh=score_thres, n_min=n_min, label_to_ignore= label_to_ignore, device= device)
+    criteria_16 = OhemCELoss(thresh=score_thres, n_min=n_min, label_to_ignore= label_to_ignore, device= device)
+    criteria_32 = OhemCELoss(thresh=score_thres, n_min=n_min, label_to_ignore= label_to_ignore, device= device)
+    boundary_loss_func = DetailAggregateLoss(device)
+
+    if dist.get_rank()==0: 
+        print('max_iter: ', max_iter)
+        print('save_iter_sep: ', save_iter_sep)
+        print('warmup_steps: ', warmup_steps)
 
     ## optimizer
 
     optimizer = Optimizer(
-            #model = net.module,
-            model = net,
+            model = net.module,
+            #model = net,
             loss = boundary_loss_func,
             lr0 = lr_start,
             momentum = momentum,
@@ -133,6 +161,7 @@ def train():
     #starting_time = glob_st = time.time()
     diter = iter(dl)
     epoch = 0
+    starting_time = time.time()
     for i in range(max_iter):
         try:
             im, lb = next(diter)
@@ -144,6 +173,7 @@ def train():
             im, lb = next(diter)
         #im = im.cuda()
         #lb = lb.cuda()
+        im, lb = im.to(device), lb.to(device)
         H, W = im.size()[2:]
         lb = torch.squeeze(lb, 1)
 
@@ -157,7 +187,6 @@ def train():
             out, out16, out32, detail4, detail8 = net(im)
 
         if (not use_boundary_2) and (not use_boundary_4) and use_boundary_8:
-            print(len(net(im)))
             out, out16, out32, detail8 = net(im)
 
         if (not use_boundary_2) and (not use_boundary_4) and (not use_boundary_8):
@@ -172,22 +201,19 @@ def train():
         
         
         if use_boundary_2: 
-            # if dist.get_rank()==0:
-            #     print('use_boundary_2')
+            #if dist.get_rank()==0: print('use_boundary_2')
             boundery_bce_loss2,  boundery_dice_loss2 = boundary_loss_func(detail2, lb)
             boundery_bce_loss += boundery_bce_loss2
             boundery_dice_loss += boundery_dice_loss2
         
         if use_boundary_4:
-            # if dist.get_rank()==0:
-            #     print('use_boundary_4')
+            #if dist.get_rank()==0: print('use_boundary_4')
             boundery_bce_loss4,  boundery_dice_loss4 = boundary_loss_func(detail4, lb)
             boundery_bce_loss += boundery_bce_loss4
             boundery_dice_loss += boundery_dice_loss4
 
         if use_boundary_8:
-            # if dist.get_rank()==0:
-            #     print('use_boundary_8')
+            #if dist.get_rank()==0: print('use_boundary_8')
             boundery_bce_loss8,  boundery_dice_loss8 = boundary_loss_func(detail8, lb)
             boundery_bce_loss += boundery_bce_loss8
             boundery_dice_loss += boundery_dice_loss8
@@ -213,23 +239,26 @@ def train():
 
             loss_boundery_bce_avg = sum(loss_boundery_bce) / len(loss_boundery_bce)
             loss_boundery_dice_avg = sum(loss_boundery_dice) / len(loss_boundery_dice)
+            elapsed_time = time.time() - starting_time
+            eta = (elapsed_time / i+1) * (max_iter - i)
             msg = ', '.join([
                 f'it: {i + 1}/{max_iter}',
                 f'lr: {lr:4f}',
                 f'loss: {loss_avg:.4f}',
                 f'boundery_bce_loss: {loss_boundery_bce_avg:.4f}',
                 f'boundery_dice_loss: {loss_boundery_dice_avg:.4f}',
-                #f'eta: {eta}',
+                f'elapsed_time: {elapsed_time:2f}'
+                f'eta: {eta:.2f}',
             ])
             
-            print(msg)
+            if dist.get_rank()==0: print(msg)
             #logger.info(msg)
             
             loss_avg = []
             loss_boundery_bce = []
             loss_boundery_dice = []
             st = ed
-            # print(boundary_loss_func.get_params())
+            # if dist.get_rank()==0: print(boundary_loss_func.get_params())
 
         if ((i + 1) % save_iter_sep) == 0:# and i != 0:
             
@@ -237,21 +266,21 @@ def train():
             #logger.info('evaluating the model ...')
             #logger.info('setup and restore model')
 
-            print('evaluating the model ...')
-            print('setup and restore model')
+            if dist.get_rank()==0: print('evaluating the model ...')
+            if dist.get_rank()==0: print('setup and restore model')
             
             net.eval() # set the net in evaluation mode
 
             ## evaluator
 
             #logger.info('compute the mIOU')
-            print('compute the mIOU')
+            if dist.get_rank()==0: print('compute the mIOU')
 
             with torch.no_grad():
-                single_scale1 = MscEvalV0()
+                single_scale1 = MscEvalV0(device= device)
                 mIOU50 = single_scale1(net, dl_val, n_classes)
 
-                single_scale2= MscEvalV0(scale=0.75)
+                single_scale2= MscEvalV0(scale=0.75, device= device)
                 mIOU75 = single_scale2(net, dl_val, n_classes)
 
 
@@ -264,33 +293,38 @@ def train():
             torch.save(state, save_pth)
 
             #logger.info('training iteration {}, model saved to: {}'.format(i + 1, save_pth))
-            print(f'training iteration {(i + 1)}, model saved to: {save_pth}')
+            if dist.get_rank()==0: print(f'training iteration {(i + 1)}, model saved to: {save_pth}')
 
             if mIOU50 > maxmIOU50:
                 maxmIOU50 = mIOU50
                 save_pth = os.path.join(checkpoint_save_path, 'model_maxmIOU50.pth'.format(i + 1))
-                #state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
-                state = net.state_dict()
-                #if dist.get_rank()==0: torch.save(state, save_pth)
-                torch.save(state, save_pth)
+
+                state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+                #state = net.state_dict()
+
+                if dist.get_rank()==0: torch.save(state, save_pth)
+                #torch.save(state, save_pth)
                     
                 #logger.info('max mIOU model saved to: {}'.format(save_pth))
-                print(f'max mIOU model saved to: {save_pth}')
+                if dist.get_rank()==0: print(f'max mIOU model saved to: {save_pth}')
             
             if mIOU75 > maxmIOU75:
                 maxmIOU75 = mIOU75
                 save_pth = os.path.join(checkpoint_save_path, 'model_maxmIOU75.pth'.format(i + 1))
-                #state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
-                state = net.state_dict()
-                #if dist.get_rank()==0: torch.save(state, save_pth)
-                torch.save(state, save_pth)
+
+                state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+                #state = net.state_dict()
+
+                if dist.get_rank()==0: torch.save(state, save_pth)
+                #torch.save(state, save_pth)
+
                 #logger.info('max mIOU model saved to: {}'.format(save_pth))
-                print(f'max mIOU model saved to: {save_pth}')
+                if dist.get_rank()==0: print(f'max mIOU model saved to: {save_pth}')
             
             #logger.info('mIOU50 is: {}, mIOU75 is: {}'.format(mIOU50, mIOU75))
             #logger.info('maxmIOU50 is: {}, maxmIOU75 is: {}.'.format(maxmIOU50, maxmIOU75))
-            print(f'mIOU50 is: {mIOU50}, mIOU75 is: {mIOU75}')
-            print(f'maxmIOU50 is: {maxmIOU50}, maxmIOU75 is: {maxmIOU75}.')
+            if dist.get_rank()==0: print(f'mIOU50 is: {mIOU50}, mIOU75 is: {mIOU75}')
+            if dist.get_rank()==0: print(f'maxmIOU50 is: {maxmIOU50}, maxmIOU75 is: {maxmIOU75}.')
 
             net.train()
 
@@ -298,12 +332,17 @@ def train():
 
     save_pth = os.path.join(checkpoint_save_path, 'model_final.pth')
     #net.cpu()
-    #state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
-    state = net.state_dict()
-    #if dist.get_rank()==0: torch.save(state, save_pth)
-    torch.save(state, save_pth)
-    #logger.info('training done, model saved to: {}'.format(save_pth))
-    print('training done, model saved to: {save_pth}')
-    print('epoch: ', epoch)
+    net.cpu()
 
-train()
+    state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+    #state = net.state_dict()
+
+    if dist.get_rank()==0: torch.save(state, save_pth)
+    #torch.save(state, save_pth)
+
+    #logger.info('training done, model saved to: {}'.format(save_pth))
+    if dist.get_rank()==0: print(f'training done, model saved to: {save_pth}')
+    if dist.get_rank()==0: print('epoch: ', epoch)
+
+if __name__ == '__main__':
+    train()

@@ -98,7 +98,7 @@ class AttentionRefinementModule(nn.Module):
 
 
 class ContextPath(nn.Module):
-    def __init__(self, backbone_name= 'No Net Selected', pretrain_model= '', use_conv_last= False, input_size= 512, *args, **kwargs):
+    def __init__(self, backbone_name= 'No Net Selected', pretrain_model= '', use_conv_last= False, input_size= 512, device= 'cpu', *args, **kwargs):
         super(ContextPath, self).__init__(*args, **kwargs)
         
         self.backbone_name = backbone_name
@@ -106,7 +106,7 @@ class ContextPath(nn.Module):
         print('backbone: ', backbone_name)
 
         if backbone_name == 'STDCNet1446':
-            self.backbone = STDCNet1446(pretrain_model= pretrain_model, use_conv_last= use_conv_last)
+            self.backbone = STDCNet1446(pretrain_model= pretrain_model, use_conv_last= use_conv_last, device= device)
             self.attention_refinement_module16 = AttentionRefinementModule(channels_in= 512, channels_out= 128)
             channels_in = 1024 #inplanes?
             #if use_conv_last: channels_in = 1024
@@ -116,7 +116,7 @@ class ContextPath(nn.Module):
             self.conv_avg = ConvBNReLU(channels_in, 128, kernel_sizes= 1, stride= 1, padding= 0)
         
         elif backbone_name == 'STDCNet813':
-            self.backbone = STDCNet813(pretrain_model= pretrain_model, use_conv_last= use_conv_last)
+            self.backbone = STDCNet813(pretrain_model= pretrain_model, use_conv_last= use_conv_last, device= device)
             self.attention_refinement_module16 = AttentionRefinementModule(512, 128)
             channels_in = 1024 #inplanes?
             #if use_conv_last: channels_in = 1024
@@ -314,7 +314,7 @@ class FeatureFusionModule(nn.Module):
 
 
 class BiSeNet(nn.Module):
-    def __init__(self, backbone_name, n_classes, pretrain_model= '', use_boundary_2= False, use_boundary_4= False, use_boundary_8= False, use_boundary_16= False, input_size= 512, use_conv_last= False, heat_map= False, *args, **kwargs):
+    def __init__(self, backbone_name, n_classes, pretrain_model= '', use_boundary_2= False, use_boundary_4= False, use_boundary_8= False, use_boundary_16= False, input_size= 512, use_conv_last= False, heat_map= False, device= 'cpu', *args, **kwargs):
         super(BiSeNet, self).__init__(*args, **kwargs)
         
         self.use_boundary_2 = use_boundary_2
@@ -324,7 +324,7 @@ class BiSeNet(nn.Module):
         self.input_size = input_size
 
         print('BiSeNet backbone: ', backbone_name)
-        self.cp = ContextPath(backbone_name, pretrain_model, input_size= self.input_size, use_conv_last= use_conv_last)
+        self.cp = ContextPath(backbone_name, pretrain_model, input_size= self.input_size, use_conv_last= use_conv_last, device= device)
         
         if backbone_name == 'STDCNet1446':
             conv_out_channels_in = 128

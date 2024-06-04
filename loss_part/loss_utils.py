@@ -19,7 +19,7 @@ def enet_weighing(label, num_classes, c=1.02):
     total = 0
 
     #label = label.cpu().numpy()
-    label = label.numpy()
+    label = label.cpu().numpy()
 
     # Flatten label
     flat_label = label.flatten()

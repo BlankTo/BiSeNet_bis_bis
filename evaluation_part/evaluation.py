@@ -11,6 +11,8 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as torch_functional
 
+import torch.distributed as dist
+
 from dataset_part.cityscapes import CityScapes
 from model_part.stages import BiSeNet
 
@@ -18,29 +20,32 @@ from model_part.stages import BiSeNet
 
 class MscEvalV0(object):
 
-    def __init__(self, scale= 0.5, label_to_ignore= 255):
+    def __init__(self, scale= 0.5, label_to_ignore= 255, device= 'cpu'):
         self.label_to_ignore = label_to_ignore
         self.scale = scale
+        self.device = device
 
     def __call__(self, net, dl, n_classes):
         ## evaluate
         #hist = torch.zeros(n_classes, n_classes).cuda().detach()
         hist = torch.zeros(n_classes, n_classes)
-        #if dist.is_initialized() and dist.get_rank() != 0:
-        #    diter = enumerate(dl)
-        #else:
-        #    diter = enumerate(tqdm(dl))
-        diter = enumerate(tqdm(dl))
+        hist = hist.to(self.device).detach()
+        if dist.is_initialized() and dist.get_rank() != 0:
+            diter = enumerate(dl)
+        else:
+            diter = enumerate(tqdm(dl))
+        #diter = enumerate(tqdm(dl))
         for i, (imgs, label) in diter:
 
             #N, _, Height, Width = label.shape
 
             #label = label.squeeze(1).cuda()
             label = label.squeeze(1)
+            label = label.to(self.device)
             size = label.size()[-2:]
 
             #imgs = imgs.cuda()
-            imgs = imgs
+            imgs = imgs.to(self.device)
 
             N, C, Height, Width = imgs.size()
             new_height_width = [int(Height * self.scale), int(Width * self.scale)]
@@ -55,13 +60,14 @@ class MscEvalV0(object):
             preds = torch.argmax(probs, dim=1)
             keep = label != self.label_to_ignore
             hist += torch.bincount((label[keep] * n_classes + preds[keep]), minlength= n_classes ** 2).view(n_classes, n_classes).float()
-        #if dist.is_initialized():
-        #    dist.all_reduce(hist, dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.all_reduce(hist, dist.ReduceOp.SUM)
         ious = hist.diag() / (hist.sum(dim=0) + hist.sum(dim=1) - hist.diag())
         miou = ious.mean()
         return miou.item()
+    
 # '.\\model_part\\checkpoints' # '.\\dataset_part\\data'
-def evaluatev0(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), data_path= os.path.join('dataset_part', 'data'), backbone_name= 'No model selected', scale= 0.75, use_boundary_2= False, use_boundary_4= False, use_boundary_8= False, use_boundary_16= False, use_conv_last= False):
+def evaluatev0(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), data_path= os.path.join('dataset_part', 'data'), backbone_name= 'No model selected', scale= 0.75, use_boundary_2= False, use_boundary_4= False, use_boundary_8= False, use_boundary_16= False, use_conv_last= False, device= 'cpu'):
     print('scale', scale)
     print('use_boundary_2', use_boundary_2)
     print('use_boundary_4', use_boundary_4)
@@ -90,11 +96,12 @@ def evaluatev0(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), 
     
     net.load_state_dict(torch.load(checkpoint_save_path))
     #net.cuda()
+    net = net.to(device)
     net.eval()
     
 
     with torch.no_grad():
-        single_scale = MscEvalV0(scale= scale)
+        single_scale = MscEvalV0(scale= scale, device= device)
         mIOU = single_scale(net, dl, 19)
     #logger = logging.getLogger()
     #logger.info('mIOU is: %s\n', mIOU)
@@ -109,6 +116,7 @@ class MscEval(object):
             label_to_ignore= 255,
             cropsize= 1024,
             flip= True,
+            device= 'cpu',
             ):
         self.scales = scales
         self.n_classes = n_classes
@@ -118,12 +126,14 @@ class MscEval(object):
         ## dataloader
         self.dl = dataloader
         self.net = model
+        self.device = device
 
 
     def pad_tensor(self, inten, size):
         N, C, Height, Width = inten.size()
         #outten = torch.zeros(N, C, size[0], size[1]).cuda()
         outten = torch.zeros(N, C, size[0], size[1])
+        outten = outten.to(self.device)
         outten.requires_grad = False
         margin_h, margin_w = (size[0] - Height), (size[1] - Width)
         hst, hed = (margin_h // 2), (margin_h // 2 + Height)
@@ -166,6 +176,7 @@ class MscEval(object):
             n_y = math.ceil((Height - cropsize) / stride) + 1
             #prob = torch.zeros(N, self.n_classes, Height, Width).cuda()
             prob = torch.zeros(N, self.n_classes, Height, Width)
+            prob = prob.to(self.device)
             prob.requires_grad = False
             for iy in range(n_y):
                 for ix in range(n_x):
@@ -203,19 +214,19 @@ class MscEval(object):
         n_classes = self.n_classes
         hist = np.zeros((n_classes, n_classes), dtype= np.float32)
         dloader = tqdm(self.dl)
-        #if dist.is_initialized() and not dist.get_rank()==0:
-        #    dloader = self.dl
+        if dist.is_initialized() and not dist.get_rank()==0:
+            dloader = self.dl
         for i, (imgs, label) in enumerate(dloader):
             N, _, Height, Width = label.shape
             probs = torch.zeros((N, self.n_classes, Height, Width))
             probs.requires_grad = False
             #imgs = imgs.cuda()
-            imgs = imgs
+            imgs = imgs.to(self.device)
             for sc in self.scales:
                 # prob = self.scale_crop_eval(imgs, sc)
                 prob = self.eval_chip(imgs)
                 #probs += prob.detach().cpu()
-                probs += prob.detach()
+                probs += prob.detach().cpu()
             probs = probs.data.numpy()
             preds = np.argmax(probs, axis= 1)
 
@@ -226,7 +237,7 @@ class MscEval(object):
         return mIOU
 
 # '.\\model_part\\checkpoints' # '.\\dataset_part\\data'
-def evaluate(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), data_path= os.path.join('dataset_part', 'data')):
+def evaluate(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), data_path= os.path.join('dataset_part', 'data'), device= 'cpu'):
 
     ## model
     print('\n')
@@ -238,6 +249,7 @@ def evaluate(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), da
 
     net.load_state_dict(torch.load(checkpoint_save_path))
     #net.cuda()
+    net = net.to(device)
     net.eval()
 
     ## dataset
@@ -250,7 +262,7 @@ def evaluate(checkpoint_save_path= os.path.join('model_part', 'checkpoints'), da
 
     ## evaluator
     print('compute the mIOU')
-    evaluator = MscEval(net, dl, scales= [1], flip= False)
+    evaluator = MscEval(net, dl, scales= [1], flip= False, device= device)
 
     ## eval
     mIOU = evaluator.evaluate()
